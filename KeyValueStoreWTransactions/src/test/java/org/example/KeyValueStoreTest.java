@@ -118,30 +118,22 @@ class KeyValueStoreTest {
         dataStore.set(key1, inputVal1);
 
         Thread t1 = new Thread(() -> {
-            System.out.println("Begin t1");
             dataStore.begin();
-            /*
+            dataStore.delete(key1);
             try {
                 Thread.sleep(1000);
             } catch (InterruptedException e) {
                 throw new RuntimeException(e);
             }
-            */
-
-            dataStore.delete(key1);
-            System.out.println("delete");
             dataStore.commit();
-            System.out.println("Finished t1");
 
         });
         t1.start();
 
+        // t2 should not see the delete from t1
         Thread t2 = new Thread(() -> {
-            System.out.println("Begin t2");
             String outputVal = dataStore.get(key1);
-            System.out.println(outputVal);
             assertEquals(inputVal1, outputVal);
-            System.out.println("Finished t2");
         });
         t2.start();
 
@@ -153,13 +145,14 @@ class KeyValueStoreTest {
     public void concurrentWrites() {
         KeyValueStore dataStore = new KeyValueStore();
         String key = "foo";
-        String val = "bar";
-        dataStore.set(key, val);
+        String orgVal = "bar";
+        dataStore.set(key, orgVal);
+
         String t1Val = "t1";
         String t2Val = "t2";
         Thread t1 = new Thread(() -> {
             dataStore.begin();
-            assertEquals(val, dataStore.get(key));
+            assertEquals(orgVal, dataStore.get(key));
 
             try {
                 Thread.sleep(100);
@@ -170,15 +163,18 @@ class KeyValueStoreTest {
             dataStore.set(key, t1Val);
             assertEquals(t1Val, dataStore.get(key));
             dataStore.commit();
+            assertEquals(t1Val, dataStore.get(key));
         });
 
         Thread t2 = new Thread(() -> {
             dataStore.begin();
-            assertEquals(t1Val, dataStore.get(key));
+
+            assertEquals(orgVal, dataStore.get(key), "t2 should not see the value set by t1");
 
             dataStore.set(key, t2Val);
             assertEquals(t2Val, dataStore.get(key));
             dataStore.commit();
+            assertEquals(t2Val, dataStore.get(key));
         });
 
         t1.start();
@@ -190,6 +186,46 @@ class KeyValueStoreTest {
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         }
+        assertEquals(t1Val, dataStore.get(key));
+    }
 
+    // add test case for delete then add back in
+    @Test
+    void transactionDeleteSetCommit() {
+        KeyValueStore dataStore = new KeyValueStore();
+        String key = "foo";
+        String val = "bar";
+        dataStore.set(key, val);
+
+        dataStore.begin();
+        dataStore.delete(key);
+        assertNull(dataStore.get(key));
+        String newVal = "baz";
+        dataStore.set(key, newVal);
+        assertEquals(newVal, dataStore.get(key));
+        dataStore.commit();
+
+        assertEquals(newVal, dataStore.get(key));
+    }
+
+    @Test
+    void transactionDeleteSetAbort() {
+        KeyValueStore dataStore = new KeyValueStore();
+        String key = "foo";
+        String val = "bar";
+
+        dataStore.set(key, val);
+
+        dataStore.begin();
+
+        dataStore.delete(key);
+        assertNull(dataStore.get(key));
+
+        String newVal = "baz";
+        dataStore.set(key, newVal);
+        assertEquals(newVal, dataStore.get(key));
+        dataStore.rollback();
+
+        assertEquals(val, dataStore.get(key));
     }
 }

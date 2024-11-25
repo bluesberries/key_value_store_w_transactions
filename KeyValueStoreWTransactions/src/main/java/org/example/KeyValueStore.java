@@ -2,73 +2,86 @@ package org.example;
 
 import java.util.*;
 
-// Assume serializable isolation
 public class KeyValueStore {
-    // Assuming key value store stores strings
+
     private final Map<String, String> permDataStore = new HashMap<>();
-    private final Map<String, String> tempDataStore = new HashMap<>();
-    boolean inGroup = false;
-    private final Set<String> tombstoneKeys = new HashSet<>();
+    private final Map<Long, Map<String, String>> threadTempDataStore = new HashMap<>();
+    private static final String TOMBSTONE = "SPECIAL_VALUE_TOMBSTONE";
+
+    // Transaction is between begin and commit
+    private boolean isInGroup() {
+        long currentThreadId = Thread.currentThread().threadId();
+        return threadTempDataStore.containsKey(currentThreadId);
+    }
+
+    private Map<String, String> getTempDataStore() {
+        long currentThreadId = Thread.currentThread().threadId();
+        return threadTempDataStore.get(currentThreadId);
+    }
 
     public void set(String key, String value) {
-        if (!inGroup) {
-            permDataStore.put(key, value);
-        } else {
+        if (isInGroup()) {
+            Map<String, String> tempDataStore = getTempDataStore();
             tempDataStore.put(key, value);
+        } else {
+            permDataStore.put(key, value);
         }
     }
 
     public String get(String key) {
-        if (!inGroup) {
-            return permDataStore.get(key);
-        } else {
+        if (isInGroup()) {
+            Map<String, String> tempDataStore = getTempDataStore();
+            if (!tempDataStore.containsKey(key)) {
+                return permDataStore.get(key);
+            }
             String val = tempDataStore.get(key);
-            if (val == null) {
-                if (tombstoneKeys.contains(key)) {
-                    return null;
-                }
-                val = permDataStore.get(key);
+            if (val == null || val.equals(TOMBSTONE)) {
+                return null;
             }
             return val;
         }
+        return permDataStore.get(key);
     }
 
     public void delete(String key) {
-        if (!inGroup) {
-            permDataStore.remove(key);
-        } else {
-            if (tempDataStore.containsKey(key)) {
-                tempDataStore.remove(key);
+        if (isInGroup()){
+            Map<String, String> tempDataStore = getTempDataStore();
+            if (permDataStore.containsKey(key)) {
+                tempDataStore.put(key, TOMBSTONE);
             } else {
-                tombstoneKeys.add(key);
+                tempDataStore.remove(key);
             }
+        } else {
+            permDataStore.remove(key);
         }
     }
 
     public void begin() {
-        inGroup = true;
+        long currentThreadId = Thread.currentThread().threadId();
+        threadTempDataStore.put(currentThreadId, new HashMap<String, String>());
     }
 
     public void commit() {
+        Map<String, String> tempDataStore = getTempDataStore();
         for (Map.Entry<String, String> entry : tempDataStore.entrySet()) {
             String key = entry.getKey();
-            String value = entry.getValue();
-            permDataStore.put(key, value);
+            String val = entry.getValue();
+            if (val.equals(TOMBSTONE)) {
+                permDataStore.remove(key);
+            } else {
+                permDataStore.put(key, val);
+            }
         }
-
-        for (String key : tombstoneKeys) {
-            permDataStore.remove(key);
-        }
-
-        tempDataStore.clear();
-        tombstoneKeys.clear();;
-        inGroup = false;
+        clearThreadEntries();
     }
 
     public void rollback() {
-        tempDataStore.clear();
-        tombstoneKeys.clear();;
-        inGroup = false;
+        clearThreadEntries();
+    }
+
+    private void clearThreadEntries() {
+        long currentThreadId = Thread.currentThread().threadId();
+        threadTempDataStore.remove(currentThreadId);
     }
 
 }
